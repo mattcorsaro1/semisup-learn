@@ -95,7 +95,7 @@ class CPLELearningModel(BaseEstimator):
         self.bestlbls = []
 
         # unique id
-        self.id = str(unichr(numpy.random.randint(26)+97))+str(unichr(numpy.random.randint(26)+97))
+        self.id = str(chr(numpy.random.randint(26)+97))+str(chr(numpy.random.randint(26)+97))
 
     def discriminative_likelihood(self, model, labeledData, labeledy = None, unlabeledData = None, unlabeledWeights = None, unlabeledlambda = 1, gradient=[], alpha = 0.01):
         unlabeledy = (unlabeledWeights[:, 0]<0.5)*1
