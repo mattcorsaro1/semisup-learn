@@ -10,6 +10,7 @@ class Unbuffered(object):
 import sys
 sys.stdout = Unbuffered(sys.stdout)
 
+from sklearn import svm
 from sklearn.base import BaseEstimator
 import numpy
 import sklearn.metrics
@@ -74,30 +75,35 @@ class CPLELearningModel(BaseEstimator):
 
     """
 
-    def __init__(self, basemodel, unlabeledlambda = 1, pessimistic=True, predict_from_probabilities = False, use_sample_weighting = True, max_iter=3000, verbose = 1):
-        self.model = basemodel
+    def __init__(self, C=1.0, gamma="scale", kernel="rbf", degree=3, \
+            unlabeledlambda=1, pessimistic=True, \
+            predict_from_probabilities=False, use_sample_weighting=True, \
+            max_iter=3000, verbose=1):
+        self.C=C
+        self.gamma=gamma
+        self.kernel=kernel
+        self.degree=degree
+
+        self.unlabeledlambda = unlabeledlambda
         self.pessimistic = pessimistic
         self.predict_from_probabilities = predict_from_probabilities
         self.use_sample_weighting = use_sample_weighting
         self.max_iter = max_iter
         self.verbose = verbose
 
-        self.unlabeledlambda = unlabeledlambda
+    def set_params(self, **parameters):
+        for parameter, value in parameters.items():
+            setattr(self, parameter, value)
+        return self
 
-        self.it = 0 # iteration counter
-        self.noimprovementsince = 0 # log likelihood hasn't improved since this number of iterations
-        self.maxnoimprovementsince = 3 # threshold for iterations without improvements (convergence is assumed when this is reached)
-
-        self.buffersize = 200
-        # buffer for the last few discriminative likelihoods (used to check for convergence)
-        self.lastdls = [0]*self.buffersize
-
-        # best discriminative likelihood and corresponding soft labels; updated during training
-        self.bestdl = numpy.infty
-        self.bestlbls = []
-
-        # unique id
-        self.id = str(chr(numpy.random.randint(26)+97))+str(chr(numpy.random.randint(26)+97))
+    def get_params(self, deep=True):
+        param_dict={"C": self.C, "gamma": self.gamma, "kernel": self.kernel, \
+            "degree": self.degree, "unlabeledlambda": self.unlabeledlambda, \
+            "pessimistic": self.pessimistic, \
+            "predict_from_probabilities": self.predict_from_probabilities, \
+            "use_sample_weighting": self.use_sample_weighting, \
+            "max_iter": self.max_iter, "verbose": self.verbose}
+        return param_dict
 
     def discriminative_likelihood(self, model, labeledData, labeledy = None, unlabeledData = None, unlabeledWeights = None, gradient=[]):
         unlabeledy = (unlabeledWeights[:, 0]<0.5)*1
@@ -179,7 +185,27 @@ class CPLELearningModel(BaseEstimator):
 
         return dl
 
+    def setup_for_fit(self):
+        self.it = 0 # iteration counter
+        self.noimprovementsince = 0 # log likelihood hasn't improved since this number of iterations
+        self.maxnoimprovementsince = 3 # threshold for iterations without improvements (convergence is assumed when this is reached)
+
+        self.buffersize = 200
+        # buffer for the last few discriminative likelihoods (used to check for convergence)
+        self.lastdls = [0]*self.buffersize
+
+        # best discriminative likelihood and corresponding soft labels; updated during training
+        self.bestdl = numpy.infty
+        self.bestlbls = []
+
+        # unique id
+        self.id = str(chr(numpy.random.randint(26)+97))+str(chr(numpy.random.randint(26)+97))
+
+        self.basemodel = svm.SVC(C=self.C, gamma=self.gamma, kernel=self.kernel, degree=self.degree, probability=True)
+
     def fit(self, X, y): # -1 for unlabeled
+        self.setup_for_fit()
+
         unlabeledX = X[y==-1, :]
         labeledX = X[y!=-1, :]
         labeledy = y[y!=-1]
@@ -187,14 +213,15 @@ class CPLELearningModel(BaseEstimator):
         M = unlabeledX.shape[0]
 
         # train on labeled data
-        self.model.fit(labeledX, labeledy)
+        print("Now calling fit with", labeledX.shape, labeledy.shape)
+        self.basemodel.fit(labeledX, labeledy)
 
         unlabeledy = self.predict(unlabeledX)
 
         #re-train, labeling unlabeled instances pessimistically
 
         # pessimistic soft labels ('weights') q for unlabelled points, q=P(k=0|Xu)
-        f = lambda softlabels, grad=[]: self.discriminative_likelihood_objective(self.model, labeledX, labeledy=labeledy, unlabeledData=unlabeledX, unlabeledWeights=numpy.vstack((softlabels, 1-softlabels)).T, gradient=grad) #- supLL
+        f = lambda softlabels, grad=[]: self.discriminative_likelihood_objective(self.basemodel, labeledX, labeledy=labeledy, unlabeledData=unlabeledX, unlabeledWeights=numpy.vstack((softlabels, 1-softlabels)).T, gradient=grad) #- supLL
         lblinit = numpy.random.random(len(unlabeledy))
 
         try:
@@ -220,18 +247,18 @@ class CPLELearningModel(BaseEstimator):
         weights = numpy.hstack((numpy.ones(len(labeledy)), uweights))
         labels = numpy.hstack((labeledy, unlabeledy))
         if self.use_sample_weighting:
-            self.model.fit(numpy.vstack((labeledX, unlabeledX)), labels, sample_weight=weights)
+            self.basemodel.fit(numpy.vstack((labeledX, unlabeledX)), labels, sample_weight=weights)
         else:
-            self.model.fit(numpy.vstack((labeledX, unlabeledX)), labels)
+            self.basemodel.fit(numpy.vstack((labeledX, unlabeledX)), labels)
 
         if self.verbose > 1:
             print("number of non-one soft labels: ", numpy.sum(self.bestsoftlbl != 1), ", balance:", numpy.sum(self.bestsoftlbl<0.5), " / ", len(self.bestsoftlbl))
             print("current likelihood: ", ll)
 
-        if not getattr(self.model, "predict_proba", None):
+        if not getattr(self.basemodel, "predict_proba", None):
             # Platt scaling
             self.plattlr = LR()
-            preds = self.model.predict(labeledX)
+            preds = self.basemodel.predict(labeledX)
             self.plattlr.fit( preds.reshape( -1, 1 ), labeledy )
 
         return self
@@ -254,10 +281,10 @@ class CPLELearningModel(BaseEstimator):
             order, as they appear in the attribute `classes_`.
         """
 
-        if getattr(self.model, "predict_proba", None):
-            return self.model.predict_proba(X)
+        if getattr(self.basemodel, "predict_proba", None):
+            return self.basemodel.predict_proba(X)
         else:
-            preds = self.model.predict(X)
+            preds = self.basemodel.predict(X)
             return self.plattlr.predict_proba(preds.reshape( -1, 1 ))
 
     def predict(self, X):
@@ -277,7 +304,7 @@ class CPLELearningModel(BaseEstimator):
             P = self.predict_proba(X)
             return (P[:, 0]<numpy.average(P[:, 0]))
         else:
-            return self.model.predict(X)
+            return self.basemodel.predict(X)
 
     def score(self, X, y, sample_weight=None):
         return sklearn.metrics.accuracy_score(y, self.predict(X), sample_weight=sample_weight)
