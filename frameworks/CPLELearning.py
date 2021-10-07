@@ -74,13 +74,15 @@ class CPLELearningModel(BaseEstimator):
 
     """
 
-    def __init__(self, basemodel, pessimistic=True, predict_from_probabilities = False, use_sample_weighting = True, max_iter=3000, verbose = 1):
+    def __init__(self, basemodel, unlabeledlambda = 1, pessimistic=True, predict_from_probabilities = False, use_sample_weighting = True, max_iter=3000, verbose = 1):
         self.model = basemodel
         self.pessimistic = pessimistic
         self.predict_from_probabilities = predict_from_probabilities
         self.use_sample_weighting = use_sample_weighting
         self.max_iter = max_iter
         self.verbose = verbose
+
+        self.unlabeledlambda = unlabeledlambda
 
         self.it = 0 # iteration counter
         self.noimprovementsince = 0 # log likelihood hasn't improved since this number of iterations
@@ -97,7 +99,7 @@ class CPLELearningModel(BaseEstimator):
         # unique id
         self.id = str(chr(numpy.random.randint(26)+97))+str(chr(numpy.random.randint(26)+97))
 
-    def discriminative_likelihood(self, model, labeledData, labeledy = None, unlabeledData = None, unlabeledWeights = None, unlabeledlambda = 1, gradient=[], alpha = 0.01):
+    def discriminative_likelihood(self, model, labeledData, labeledy = None, unlabeledData = None, unlabeledWeights = None, gradient=[]):
         unlabeledy = (unlabeledWeights[:, 0]<0.5)*1
         uweights = numpy.copy(unlabeledWeights[:, 0]) # large prob. for k=0 instances, small prob. for k=1 instances
         uweights[unlabeledy==1] = 1-uweights[unlabeledy==1] # subtract from 1 for k=1 instances to reflect confidence
@@ -134,18 +136,18 @@ class CPLELearningModel(BaseEstimator):
 
         if self.pessimistic:
             # pessimistic: minimize the difference between unlabeled and labeled discriminative likelihood (assume worst case for unknown true labels)
-            dl = unlabeledlambda * unlabeledDL - labeledDL
+            dl = self.unlabeledlambda * unlabeledDL - labeledDL
         else:
             # optimistic: minimize negative total discriminative likelihood (i.e. maximize likelihood)
-            dl = - unlabeledlambda * unlabeledDL - labeledDL
+            dl = - self.unlabeledlambda * unlabeledDL - labeledDL
 
         return dl
 
-    def discriminative_likelihood_objective(self, model, labeledData, labeledy = None, unlabeledData = None, unlabeledWeights = None, unlabeledlambda = 1, gradient=[], alpha = 0.01):
+    def discriminative_likelihood_objective(self, model, labeledData, labeledy = None, unlabeledData = None, unlabeledWeights = None, gradient=[]):
         if self.it == 0:
             self.lastdls = [0]*self.buffersize
 
-        dl = self.discriminative_likelihood(model, labeledData, labeledy, unlabeledData, unlabeledWeights, unlabeledlambda, gradient, alpha)
+        dl = self.discriminative_likelihood(model, labeledData, labeledy, unlabeledData, unlabeledWeights, gradient)
 
         self.it += 1
         self.lastdls[numpy.mod(self.it, len(self.lastdls))] = dl
