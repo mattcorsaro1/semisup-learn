@@ -105,7 +105,7 @@ class CPLELearningModel(BaseEstimator):
             "max_iter": self.max_iter, "verbose": self.verbose}
         return param_dict
 
-    def discriminative_likelihood(self, model, labeledData, labeledy = None, unlabeledData = None, unlabeledWeights = None, gradient=[]):
+    def discriminative_likelihood(self, labeledData, labeledy = None, unlabeledData = None, unlabeledWeights = None, gradient=[]):
         unlabeledy = (unlabeledWeights[:, 0]<0.5)*1
         uweights = numpy.copy(unlabeledWeights[:, 0]) # large prob. for k=0 instances, small prob. for k=1 instances
         uweights[unlabeledy==1] = 1-uweights[unlabeledy==1] # subtract from 1 for k=1 instances to reflect confidence
@@ -114,22 +114,22 @@ class CPLELearningModel(BaseEstimator):
 
         # fit model on supervised data
         if self.use_sample_weighting:
-            model.fit(numpy.vstack((labeledData, unlabeledData)), labels, sample_weight=weights)
+            self.basemodel.fit(numpy.vstack((labeledData, unlabeledData)), labels, sample_weight=weights)
         else:
-            model.fit(numpy.vstack((labeledData, unlabeledData)), labels)
+            self.basemodel.fit(numpy.vstack((labeledData, unlabeledData)), labels)
 
         # probability of labeled data
-        P = model.predict_proba(labeledData)
+        P = self.basemodel.predict_proba(labeledData)
 
         try:
             # labeled discriminative log likelihood
             labeledDL = -sklearn.metrics.log_loss(labeledy, P)
         except Exception as e:
             print(e)
-            P = model.predict_proba(labeledData)
+            P = self.basemodel.predict_proba(labeledData)
 
         # probability of unlabeled data
-        unlabeledP = model.predict_proba(unlabeledData)
+        unlabeledP = self.basemodel.predict_proba(unlabeledData)
 
         try:
             # unlabeled discriminative log likelihood
@@ -138,7 +138,7 @@ class CPLELearningModel(BaseEstimator):
             unlabeledDL = numpy.average((unlabeledWeights*numpy.vstack((1-unlabeledy, unlabeledy)).T*numpy.log(unlabeledP)).sum(axis=1))
         except Exception as e:
             print(e)
-            unlabeledP = model.predict_proba(unlabeledData)
+            unlabeledP = self.basemodel.predict_proba(unlabeledData)
 
         if self.pessimistic:
             # pessimistic: minimize the difference between unlabeled and labeled discriminative likelihood (assume worst case for unknown true labels)
@@ -149,11 +149,11 @@ class CPLELearningModel(BaseEstimator):
 
         return dl
 
-    def discriminative_likelihood_objective(self, model, labeledData, labeledy = None, unlabeledData = None, unlabeledWeights = None, gradient=[]):
+    def discriminative_likelihood_objective(self, labeledData, labeledy = None, unlabeledData = None, unlabeledWeights = None, gradient=[]):
         if self.it == 0:
             self.lastdls = [0]*self.buffersize
 
-        dl = self.discriminative_likelihood(model, labeledData, labeledy, unlabeledData, unlabeledWeights, gradient)
+        dl = self.discriminative_likelihood(labeledData, labeledy, unlabeledData, unlabeledWeights, gradient)
 
         self.it += 1
         self.lastdls[numpy.mod(self.it, len(self.lastdls))] = dl
@@ -213,7 +213,6 @@ class CPLELearningModel(BaseEstimator):
         M = unlabeledX.shape[0]
 
         # train on labeled data
-        print("Now calling fit with", labeledX.shape, labeledy.shape)
         self.basemodel.fit(labeledX, labeledy)
 
         unlabeledy = self.predict(unlabeledX)
@@ -221,7 +220,7 @@ class CPLELearningModel(BaseEstimator):
         #re-train, labeling unlabeled instances pessimistically
 
         # pessimistic soft labels ('weights') q for unlabelled points, q=P(k=0|Xu)
-        f = lambda softlabels, grad=[]: self.discriminative_likelihood_objective(self.basemodel, labeledX, labeledy=labeledy, unlabeledData=unlabeledX, unlabeledWeights=numpy.vstack((softlabels, 1-softlabels)).T, gradient=grad) #- supLL
+        f = lambda softlabels, grad=[]: self.discriminative_likelihood_objective(labeledX, labeledy=labeledy, unlabeledData=unlabeledX, unlabeledWeights=numpy.vstack((softlabels, 1-softlabels)).T, gradient=grad) #- supLL
         lblinit = numpy.random.random(len(unlabeledy))
 
         try:
