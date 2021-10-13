@@ -112,11 +112,13 @@ class CPLELearningModel(BaseEstimator):
         weights = numpy.hstack((numpy.ones(len(labeledy)), uweights))
         labels = numpy.hstack((labeledy, unlabeledy))
 
-        # fit model on supervised data
-        if self.use_sample_weighting:
-            self.basemodel.fit(numpy.vstack((labeledData, unlabeledData)), labels, sample_weight=weights)
-        else:
-            self.basemodel.fit(numpy.vstack((labeledData, unlabeledData)), labels)
+        stacked_labeledData = numpy.vstack((labeledData, unlabeledData))
+        if stacked_labeledData.shape[0] > 0:
+            # fit model on supervised data
+            if self.use_sample_weighting:
+                self.basemodel.fit(stacked_labeledData, labels, sample_weight=weights)
+            else:
+                self.basemodel.fit(stacked_labeledData, labels)
 
         # probability of labeled data
         P = self.basemodel.predict_proba(labeledData)
@@ -204,6 +206,9 @@ class CPLELearningModel(BaseEstimator):
         self.basemodel = svm.SVC(C=self.C, gamma=self.gamma, kernel=self.kernel, degree=self.degree, probability=True)
 
     def fit(self, X, y): # -1 for unlabeled
+        if X.shape[0] == 0:
+            return self
+
         self.setup_for_fit()
 
         unlabeledX = X[y==-1, :]
@@ -212,8 +217,9 @@ class CPLELearningModel(BaseEstimator):
 
         M = unlabeledX.shape[0]
 
-        # train on labeled data
-        self.basemodel.fit(labeledX, labeledy)
+        if labeledX.shape[0] > 0:
+            # train on labeled data
+            self.basemodel.fit(labeledX, labeledy)
 
         unlabeledy = self.predict(unlabeledX)
 
@@ -245,10 +251,12 @@ class CPLELearningModel(BaseEstimator):
         uweights[unlabeledy==1] = 1-uweights[unlabeledy==1] # subtract from 1 for k=1 instances to reflect confidence
         weights = numpy.hstack((numpy.ones(len(labeledy)), uweights))
         labels = numpy.hstack((labeledy, unlabeledy))
-        if self.use_sample_weighting:
-            self.basemodel.fit(numpy.vstack((labeledX, unlabeledX)), labels, sample_weight=weights)
-        else:
-            self.basemodel.fit(numpy.vstack((labeledX, unlabeledX)), labels)
+        stacked_labeledX = numpy.vstack((labeledX, unlabeledX))
+        if stacked_labeledX.shape[0] > 0:
+            if self.use_sample_weighting:
+                self.basemodel.fit(stacked_labeledX, labels, sample_weight=weights)
+            else:
+                self.basemodel.fit(stacked_labeledX, labels)
 
         if self.verbose > 1:
             print("number of non-one soft labels: ", numpy.sum(self.bestsoftlbl != 1), ", balance:", numpy.sum(self.bestsoftlbl<0.5), " / ", len(self.bestsoftlbl))
