@@ -294,6 +294,9 @@ class CPLELearningModel(BaseEstimator):
             preds = self.basemodel.predict(X)
             return self.plattlr.predict_proba(preds.reshape( -1, 1 ))
 
+    def decision_function(self, X):
+        return self.basemodel.decision_function(X)
+
     def predict(self, X):
         """Perform classification on samples in X.
 
